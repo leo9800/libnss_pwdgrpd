@@ -1,6 +1,8 @@
 #include <asm-generic/errno-base.h>
 #include <json-c/json.h>
 #include <curl/curl.h>
+#include <json-c/json_object.h>
+#include <json-c/json_types.h>
 #include <nss.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +18,11 @@
 #ifndef PWDGRPD_API_ENDPOINT
 #define PWDGRPD_API_ENDPOINT "http://localhost:8000"
 #endif
+
+static struct json_object *__pwdgrpd_pwall = NULL;
+static struct json_object *__pwdgrpd_grall = NULL;
+off_t __pwdgrpd_pwall_off = -1;
+off_t __pwdgrpd_grall_off = -1;
 
 static size_t curl_write_cb(void *, size_t, size_t, void *);
 static inline char *safe_bufcpy(const char *, char **, const char *, const size_t);
@@ -175,6 +182,190 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	}
 
 	json_object_put(json);
+	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status _nss_pwdgrpd_getpwent_r(
+	struct passwd *result,
+	char *buffer,
+	size_t buflen,
+	int *errnop
+)
+{
+	if (__pwdgrpd_pwall_off == -1) {
+		_nss_pwdgrpd_setpwent();
+		if (__pwdgrpd_pwall_off == -1) {
+			*errnop = EIO;
+			return NSS_STATUS_UNAVAIL;
+		}
+	}
+	size_t npwds = json_object_array_length(__pwdgrpd_pwall);
+	if (__pwdgrpd_grall_off >= npwds)
+		return NSS_STATUS_NOTFOUND;
+	struct json_object *j_pwd;
+	if (!json_object_array_get_idx(__pwdgrpd_pwall, __pwdgrpd_pwall_off)) {
+		*errnop = EINVAL;
+		return NSS_STATUS_UNAVAIL;
+	}
+	return __pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
+}
+
+enum nss_status _nss_pwdgrpd_setpwent()
+{
+	int http_status;
+	char url[1024];
+
+	snprintf(url, 1024, PWDGRPD_API_ENDPOINT"/getpwall?t=json");
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	CURL *curl = curl_easy_init();
+	if (!curl) {
+		curl_global_cleanup();
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	struct binary_string http_res = {.payload = malloc(1), .size = 0};
+	http_res.payload[0] = 0;
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &curl_write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_res);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
+	curl_easy_cleanup(curl);
+	curl_global_cleanup();
+
+	if (res != CURLE_OK) {
+		free(http_res.payload);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	if (http_status == 403) {
+		free(http_res.payload);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	if (http_status != 200) {
+		free(http_res.payload);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	__pwdgrpd_pwall = json_tokener_parse(http_res.payload);
+	free(http_res.payload);
+
+	if (!__pwdgrpd_pwall) {
+		__pwdgrpd_pwall_off = -1;
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	if (json_object_get_type(__pwdgrpd_pwall) != json_type_array) {
+		json_object_put(__pwdgrpd_pwall);
+		__pwdgrpd_pwall = NULL;
+		__pwdgrpd_pwall_off = -1;
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	__pwdgrpd_pwall_off = 0;
+	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status _nss_pwdgrpd_endpwent()
+{
+	if (__pwdgrpd_pwall) json_object_put(__pwdgrpd_pwall);
+	__pwdgrpd_pwall = NULL;
+	__pwdgrpd_pwall_off = -1;
+	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status _nss_pwdgrpd_getgrent_r(
+	struct group *result,
+	char *buffer,
+	size_t buflen,
+	int *errnop
+)
+{
+	if (__pwdgrpd_grall_off == -1) {
+		_nss_pwdgrpd_setgrent();
+		if (__pwdgrpd_grall_off == -1) {
+			*errnop = EIO;
+			return NSS_STATUS_UNAVAIL;
+		}
+	}
+	size_t ngrps = json_object_array_length(__pwdgrpd_grall);
+	if (__pwdgrpd_grall_off >= ngrps)
+		return NSS_STATUS_NOTFOUND;
+	struct json_object *j_grp;
+	if (!json_object_array_get_idx(__pwdgrpd_grall, __pwdgrpd_grall_off)) {
+		*errnop = EINVAL;
+		return NSS_STATUS_UNAVAIL;
+	}
+	return __pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
+}
+
+enum nss_status _nss_pwdgrpd_setgrent()
+{
+	int http_status;
+	char url[1024];
+
+	snprintf(url, 1024, PWDGRPD_API_ENDPOINT"/getgrall?t=json");
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	CURL *curl = curl_easy_init();
+	if (!curl) {
+		curl_global_cleanup();
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	struct binary_string http_res = {.payload = malloc(1), .size = 0};
+	http_res.payload[0] = 0;
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &curl_write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_res);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
+	curl_easy_cleanup(curl);
+	curl_global_cleanup();
+
+	if (res != CURLE_OK) {
+		free(http_res.payload);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	if (http_status == 403) {
+		free(http_res.payload);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	if (http_status != 200) {
+		free(http_res.payload);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	__pwdgrpd_grall = json_tokener_parse(http_res.payload);
+	free(http_res.payload);
+
+	if (!__pwdgrpd_grall) {
+		__pwdgrpd_grall_off = -1;
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	if (json_object_get_type(__pwdgrpd_grall) != json_type_array) {
+		json_object_put(__pwdgrpd_grall);
+		__pwdgrpd_grall = NULL;
+		__pwdgrpd_grall_off = -1;
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	__pwdgrpd_grall_off = 0;
+	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status _nss_pwdgrpd_endgrent()
+{
+	if (__pwdgrpd_grall) json_object_put(__pwdgrpd_grall);
+	__pwdgrpd_grall = NULL;
+	__pwdgrpd_grall_off = -1;
 	return NSS_STATUS_SUCCESS;
 }
 
