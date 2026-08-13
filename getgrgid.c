@@ -19,8 +19,7 @@ int main(int argc, char *argv[])
 
 	if (r == NSS_STATUS_SUCCESS) {
 		printf("name=%s gid=%d\n", grp.gr_name, grp.gr_gid);
-		for (char **m = grp.gr_mem; *m != NULL; m++)
-			printf("member: %s\n", *m);
+		for (char **m = grp.gr_mem; *m != NULL; m++) printf("\tmember: %s\n", *m);
 	} else if (r == NSS_STATUS_NOTFOUND) {
 		printf("not found ...\n");
 	} else {

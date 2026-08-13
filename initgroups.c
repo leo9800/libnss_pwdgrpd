@@ -26,8 +26,7 @@ int main(int argc, char *argv[])
 
 	if (r == NSS_STATUS_SUCCESS) {
 		printf("user=%s primary_gid=%d\n", user, group);
-		for (int i = 0; i < start; i++)
-			printf("gid: %d\n", groupsp[i]);
+		for (int i = 0; i < start; i++) printf("\tgid: %d\n", groupsp[i]);
 	} else if (r == NSS_STATUS_NOTFOUND) {
 		printf("not found ...\n");
 	} else {
