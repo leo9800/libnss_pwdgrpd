@@ -1,5 +1,5 @@
 #include <asm-generic/errno-base.h>
-#include <cjson/cJSON.h>
+#include <json-c/json.h>
 #include <curl/curl.h>
 #include <nss.h>
 #include <stdio.h>
@@ -21,8 +21,8 @@ static size_t curl_write_cb(void *, size_t, size_t, void *);
 static inline char *safe_bufcpy(const char *, char **, const char *, const size_t);
 static inline enum nss_status __pwdgrpd_pw(const char *, struct passwd *, char *, size_t, int *);
 static inline enum nss_status __pwdgrpd_gr(const char *, struct group *, char *, size_t, int *);
-static inline enum nss_status __pwdgrpd_parse_pw_json(const cJSON *, struct passwd *, char *, size_t, int *);
-static inline enum nss_status __pwdgrpd_parse_gr_json(const cJSON *, struct group *, char *, size_t, int *);
+static inline enum nss_status __pwdgrpd_parse_pw_json(const struct json_object *, struct passwd *, char *, size_t, int *);
+static inline enum nss_status __pwdgrpd_parse_gr_json(const struct json_object *, struct group *, char *, size_t, int *);
 
 struct binary_string {
 	size_t size;
@@ -137,23 +137,28 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	cJSON *json = cJSON_Parse(http_res.payload);
+	struct json_object *json = json_tokener_parse(http_res.payload);
 	free(http_res.payload);
 
-	if (!cJSON_IsArray(json)) {
-		cJSON_Delete(json);
+	if (!json) {
 		*errnop = EINVAL;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	size_t ngids = cJSON_GetArraySize(json);
+	if (json_object_get_type(json) != json_type_array) {
+		json_object_put(json);
+		*errnop = EINVAL;
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	size_t ngids = json_object_array_length(json);
 
 	if (*size - *start <= ngids + 1) { // 1 gid specified in param + other retrieved by API
 		// expand required ...
 		size_t newsize = MIN(*size * 2, limit);
 		gid_t *new_groupsp = realloc(*groupsp, newsize);
 		if (new_groupsp == NULL) {
-			cJSON_Delete(json);
+			json_object_put(json);
 			*errnop = ENOMEM;
 			return NSS_STATUS_TRYAGAIN;
 		}
@@ -164,11 +169,12 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	*start += 1;
 
 	for (int i = 0; i < ngids; i++) {
-		(*groupsp)[*start] = (gid_t) cJSON_GetArrayItem(json, i)->valueint;
+		struct json_object *item = json_object_array_get_idx(json, i);
+		(*groupsp)[*start] = (gid_t) json_object_get_int(item);
 		*start += 1;
 	}
 
-	cJSON_Delete(json);
+	json_object_put(json);
 	return NSS_STATUS_SUCCESS;
 }
 
@@ -248,14 +254,14 @@ static inline enum nss_status __pwdgrpd_pw(
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	cJSON *json = cJSON_Parse(http_res.payload);
+	struct json_object *json = json_tokener_parse(http_res.payload);
 	free(http_res.payload);
 	if (!json) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
 	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
-	cJSON_Delete(json);
+	json_object_put(json);
 	return NSS_STATUS_SUCCESS;
 }
 
@@ -307,47 +313,49 @@ static inline enum nss_status __pwdgrpd_gr(
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	cJSON *json = cJSON_Parse(http_res.payload);
+	struct json_object *json = json_tokener_parse(http_res.payload);
 	free(http_res.payload);
 	if (!json) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
 	ret = __pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
-	cJSON_Delete(json);
+	json_object_put(json);
 	return ret;
 }
 
 static inline enum nss_status __pwdgrpd_parse_pw_json(
-	const cJSON *json,
+	const struct json_object *json,
 	struct passwd *result,
 	char *buffer,
 	size_t buflen,
 	int *errnop
 )
 {
-	cJSON *j_name   = cJSON_GetObjectItemCaseSensitive(json, "pw_name");
-	cJSON *j_passwd = cJSON_GetObjectItemCaseSensitive(json, "pw_passwd");
-	cJSON *j_uid    = cJSON_GetObjectItemCaseSensitive(json, "pw_uid");
-	cJSON *j_gid    = cJSON_GetObjectItemCaseSensitive(json, "pw_gid");
-	cJSON *j_gecos  = cJSON_GetObjectItemCaseSensitive(json, "pw_gecos");
-	cJSON *j_dir    = cJSON_GetObjectItemCaseSensitive(json, "pw_dir");
-	cJSON *j_shell  = cJSON_GetObjectItemCaseSensitive(json, "pw_shell");
+	struct json_object *j_name, *j_passwd, *j_uid, *j_gid, *j_gecos, *j_dir, *j_shell;
 
-	if (!j_name || !j_uid || !j_gid || !j_gecos || !j_dir || !j_shell) {
+	if (
+		!json_object_object_get_ex(json, "pw_name", &j_name) ||
+		!json_object_object_get_ex(json, "pw_passwd", &j_passwd) ||
+		!json_object_object_get_ex(json, "pw_uid", &j_uid) ||
+		!json_object_object_get_ex(json, "pw_gid", &j_gid) ||
+		!json_object_object_get_ex(json, "pw_gecos", &j_gecos) ||
+		!json_object_object_get_ex(json, "pw_dir", &j_dir) ||
+		!json_object_object_get_ex(json, "pw_shell", &j_shell)
+	) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
 
 	char *ptr = buffer;
 
-	result->pw_name   = safe_bufcpy(j_name->valuestring, &ptr, buffer, buflen);
-	result->pw_passwd = safe_bufcpy(j_passwd->valuestring, &ptr, buffer, buflen);
-	result->pw_gecos  = safe_bufcpy(j_gecos->valuestring, &ptr, buffer, buflen);
-	result->pw_dir    = safe_bufcpy(j_dir->valuestring, &ptr, buffer, buflen);
-	result->pw_shell  = safe_bufcpy(j_shell->valuestring, &ptr, buffer, buflen);
-	result->pw_uid    = (uid_t) j_uid->valueint;
-	result->pw_gid    = (gid_t) j_gid->valueint;
+	result->pw_name   = safe_bufcpy(json_object_get_string(j_name)  , &ptr, buffer, buflen);
+	result->pw_passwd = safe_bufcpy(json_object_get_string(j_passwd), &ptr, buffer, buflen);
+	result->pw_gecos  = safe_bufcpy(json_object_get_string(j_gecos) , &ptr, buffer, buflen);
+	result->pw_dir    = safe_bufcpy(json_object_get_string(j_dir)   , &ptr, buffer, buflen);
+	result->pw_shell  = safe_bufcpy(json_object_get_string(j_shell) , &ptr, buffer, buflen);
+	result->pw_uid    = (uid_t) json_object_get_int(j_uid);
+	result->pw_gid    = (gid_t) json_object_get_int(j_gid);
 
 	if (!result->pw_name || !result->pw_passwd || !result->pw_gecos || !result->pw_dir || !result->pw_shell) {
 		*errnop = ERANGE;
@@ -358,30 +366,33 @@ static inline enum nss_status __pwdgrpd_parse_pw_json(
 }
 
 static inline enum nss_status __pwdgrpd_parse_gr_json(
-	const cJSON *json,
+	const struct json_object *json,
 	struct group *result,
 	char *buffer,
 	size_t buflen,
 	int *errnop
 )
 {
-	cJSON *j_name   = cJSON_GetObjectItemCaseSensitive(json, "gr_name");
-	cJSON *j_passwd = cJSON_GetObjectItemCaseSensitive(json, "gr_passwd");
-	cJSON *j_gid    = cJSON_GetObjectItemCaseSensitive(json, "gr_gid");
-	cJSON *j_mem    = cJSON_GetObjectItemCaseSensitive(json, "gr_mem");
+	struct json_object *j_name, *j_passwd, *j_gid, *j_mem;
 
-	if (!j_name || !j_gid || !j_mem || !cJSON_IsArray(j_mem)) {
+	if (
+		!json_object_object_get_ex(json, "gr_name"  , &j_name) ||
+		!json_object_object_get_ex(json, "gr_passwd", &j_passwd) ||
+		!json_object_object_get_ex(json, "gr_gid"   , &j_gid) ||
+		!json_object_object_get_ex(json, "gr_mem"   , &j_mem) ||
+		json_object_get_type(j_mem) != json_type_array
+	) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
 
 	char *ptr = buffer;
 
-	result->gr_gid    = (gid_t) j_gid->valueint;
-	result->gr_name   = safe_bufcpy(j_name->valuestring, &ptr, buffer, buflen);
-	result->gr_passwd = safe_bufcpy(j_passwd->valuestring, &ptr, buffer, buflen);
+	result->gr_gid    = (gid_t) json_object_get_int(j_gid);
+	result->gr_name   = safe_bufcpy(json_object_get_string(j_name)  , &ptr, buffer, buflen);
+	result->gr_passwd = safe_bufcpy(json_object_get_string(j_passwd), &ptr, buffer, buflen);
 
-	size_t nmems = cJSON_GetArraySize(j_mem);
+	size_t nmems = json_object_array_length(j_mem);
 	char **mem = (char **) ptr;
 	char *ptr_mem_childs = ptr + (nmems + 1) * sizeof(char *);
 	if (ptr_mem_childs - buffer > buflen) {
@@ -391,8 +402,8 @@ static inline enum nss_status __pwdgrpd_parse_gr_json(
 	mem[nmems] = NULL; // member list should be null terminated char **
 
 	for (int i = 0; i < nmems; i++) {
-		cJSON *m = cJSON_GetArrayItem(j_mem, i);
-		mem[i] = safe_bufcpy(m->valuestring, &ptr_mem_childs, buffer, buflen);
+		json_object *m = json_object_array_get_idx(j_mem, i);
+		mem[i] = safe_bufcpy(json_object_get_string(m), &ptr_mem_childs, buffer, buflen);
 		if (mem[i] == NULL) {
 			*errnop = ERANGE;
 			return NSS_STATUS_TRYAGAIN;
