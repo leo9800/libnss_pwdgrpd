@@ -200,14 +200,17 @@ enum nss_status _nss_pwdgrpd_getpwent_r(
 		}
 	}
 	size_t npwds = json_object_array_length(__pwdgrpd_pwall);
-	if (__pwdgrpd_grall_off >= npwds)
+	if (__pwdgrpd_pwall_off >= npwds)
 		return NSS_STATUS_NOTFOUND;
-	struct json_object *j_pwd;
-	if (!json_object_array_get_idx(__pwdgrpd_pwall, __pwdgrpd_pwall_off)) {
+	struct json_object *j_pwd = json_object_array_get_idx(__pwdgrpd_pwall, __pwdgrpd_pwall_off);
+	if (!j_pwd) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
-	return __pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
+
+	enum nss_status ret = __pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
+	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_pwall_off += 1;
+	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_setpwent()
@@ -294,12 +297,14 @@ enum nss_status _nss_pwdgrpd_getgrent_r(
 	size_t ngrps = json_object_array_length(__pwdgrpd_grall);
 	if (__pwdgrpd_grall_off >= ngrps)
 		return NSS_STATUS_NOTFOUND;
-	struct json_object *j_grp;
-	if (!json_object_array_get_idx(__pwdgrpd_grall, __pwdgrpd_grall_off)) {
+	struct json_object *j_grp = json_object_array_get_idx(__pwdgrpd_grall, __pwdgrpd_grall_off);
+	if (!j_grp) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
-	return __pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
+	enum nss_status ret = __pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
+	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_grall_off += 1;
+	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_setgrent()
@@ -526,13 +531,13 @@ static inline enum nss_status __pwdgrpd_parse_pw_json(
 	struct json_object *j_name, *j_passwd, *j_uid, *j_gid, *j_gecos, *j_dir, *j_shell;
 
 	if (
-		!json_object_object_get_ex(json, "pw_name", &j_name) ||
+		!json_object_object_get_ex(json, "pw_name"  , &j_name) ||
 		!json_object_object_get_ex(json, "pw_passwd", &j_passwd) ||
-		!json_object_object_get_ex(json, "pw_uid", &j_uid) ||
-		!json_object_object_get_ex(json, "pw_gid", &j_gid) ||
-		!json_object_object_get_ex(json, "pw_gecos", &j_gecos) ||
-		!json_object_object_get_ex(json, "pw_dir", &j_dir) ||
-		!json_object_object_get_ex(json, "pw_shell", &j_shell)
+		!json_object_object_get_ex(json, "pw_uid"   , &j_uid) ||
+		!json_object_object_get_ex(json, "pw_gid"   , &j_gid) ||
+		!json_object_object_get_ex(json, "pw_gecos" , &j_gecos) ||
+		!json_object_object_get_ex(json, "pw_dir"   , &j_dir) ||
+		!json_object_object_get_ex(json, "pw_shell" , &j_shell)
 	) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
