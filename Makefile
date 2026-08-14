@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS += -Wall -Werror -Wformat -Wformat-security -std=c99
-#LDFLAGS += -rdynamic -Wl,--as-needed -Wl,-z,defs -Wl,-z,now -Wl,-z,relro
+LDFLAGS += -rdynamic -Wl,-z,defs -Wl,-z,now -Wl,-z,relro
 
 LIBNSS_PWDGRPD_HTTPS_ONLY ?= true
 
