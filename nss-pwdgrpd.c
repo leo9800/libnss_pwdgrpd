@@ -62,8 +62,10 @@ enum nss_status _nss_pwdgrpd_getpwnam_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	int ret;
 	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	ret = snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_pw(url, result, buffer, buflen, errnop);
 }
 
@@ -76,8 +78,10 @@ enum nss_status _nss_pwdgrpd_getpwuid_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	int ret;
 	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", __pwdgrpd_config.endpoint, uid);
+	ret = snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", __pwdgrpd_config.endpoint, uid);
+	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_pw(url, result, buffer, buflen, errnop);
 }
 
@@ -90,8 +94,10 @@ enum nss_status _nss_pwdgrpd_getgrnam_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	int ret;
 	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	ret = snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_gr(url, result, buffer, buflen, errnop);
 }
 
@@ -104,8 +110,10 @@ enum nss_status _nss_pwdgrpd_getgrgid_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	int ret;
 	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", __pwdgrpd_config.endpoint, gid);
+	ret = snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", __pwdgrpd_config.endpoint, gid);
+	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_gr(url, result, buffer, buflen, errnop);
 }
 
@@ -121,10 +129,12 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 {
 	int http_status;
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	int ret;
 
 	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
 
-	snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", __pwdgrpd_config.endpoint, user);
+	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", __pwdgrpd_config.endpoint, user);
+	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 	CURL *curl = curl_easy_init();
 	if (!curl) {
@@ -241,10 +251,12 @@ enum nss_status _nss_pwdgrpd_setpwent()
 {
 	int http_status;
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	int ret;
 
 	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
 
-	snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", __pwdgrpd_config.endpoint);
+	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", __pwdgrpd_config.endpoint);
+	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 	CURL *curl = curl_easy_init();
 	if (!curl) {
@@ -339,10 +351,12 @@ enum nss_status _nss_pwdgrpd_setgrent()
 {
 	int http_status;
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	int ret;
 
 	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
 
-	snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", __pwdgrpd_config.endpoint);
+	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", __pwdgrpd_config.endpoint);
+	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 	CURL *curl = curl_easy_init();
 	if (!curl) {
@@ -519,7 +533,7 @@ static inline enum nss_status __pwdgrpd_pw(
 	}
 	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
 	json_object_put(json);
-	return NSS_STATUS_SUCCESS;
+	return ret;
 }
 
 static inline enum nss_status __pwdgrpd_gr(
