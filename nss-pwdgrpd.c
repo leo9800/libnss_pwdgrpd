@@ -24,6 +24,10 @@
 #define LIBNSS_PWDGRPD_MAX_URL_LEN 1024
 #endif
 
+#ifndef LIBNSS_PWDGRPD_HTTPS_ONLY
+#define LIBNSS_PWDGRPD_HTTPS_ONLY true
+#endif
+
 struct pwdgrpd_config {
 	const char endpoint[LIBNSS_PWDGRPD_MAX_URL_LEN];
 };
@@ -403,6 +407,11 @@ enum nss_status _nss_pwdgrpd_endgrent()
 
 static bool __pwdgrpd_check_config()
 {
+#if LIBNSS_PWDGRPD_HTTPS_ONLY == true
+	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8)) return false;
+#else
+	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8) && strncmp(__pwdgrpd_config.endpoint, "http://", 7)) return false;
+#endif
 	CURLU *curlu = curl_url();
 	if (!curlu) return false;
 	CURLUcode ret = curl_url_set(curlu, CURLUPART_URL, __pwdgrpd_config.endpoint, CURLU_DISALLOW_USER | CURLU_GUESS_SCHEME);
