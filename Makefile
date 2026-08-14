@@ -11,10 +11,7 @@ LIBNSS_PWDGRPD_HTTPS_ONLY ?= true
 all: libnss_pwdgrpd.so.2
 
 libnss_pwdgrpd.so.2: nss-pwdgrpd.c
-	$(CC) -shared -fPIC $(CFLAGS) $(LDFLAGS) $(LIBS) \
-		-DLIBNSS_PWDGRPD_CONFIG_PATH=\"./config.ini\" \
-		-DLIBNSS_PWDGRPD_HTTPS_ONLY=$(LIBNSS_PWDGRPD_HTTPS_ONLY) \
-		-o $@ $<
+	$(CC) -shared -fPIC $(CFLAGS) $(LDFLAGS) $(LIBS) -DLIBNSS_PWDGRPD_HTTPS_ONLY=$(LIBNSS_PWDGRPD_HTTPS_ONLY) -o $@ $<
 
 clean:
 	rm -rf libnss_pwdgrpd.so.2
