@@ -1,4 +1,3 @@
-#include <curl/urlapi.h>
 #include <json-c/json.h>
 #include <curl/curl.h>
 #include <nss.h>
@@ -28,6 +27,8 @@
 struct pwdgrpd_config {
 	bool ok;
 	const char endpoint[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	const char proxy[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	bool ignore_proxy;
 	time_t timeout;
 };
 
@@ -38,7 +39,7 @@ struct pwdgrpd_ents {
 	off_t grp_off;
 };
 
-static struct pwdgrpd_config __pwdgrpd_config = {.ok = false, .endpoint = "\x00", .timeout = 10};
+static struct pwdgrpd_config __pwdgrpd_config = {.ok = false, .endpoint = "\x00", .proxy = "\x00", .ignore_proxy = false, .timeout = 10};
 static struct pwdgrpd_ents __pwdgrpd_ents = {.pwds = NULL, .grps = NULL, .pwd_off = -1, .grp_off = -1};
 
 static int __pwdgrpd_parse_config(void *, const char *, const char *, const char *);
@@ -379,6 +380,11 @@ static inline enum nss_status __pwdgrpd_curl(
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_response);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, __pwdgrpd_config.timeout);
 
+	if (__pwdgrpd_config.ignore_proxy)
+		curl_easy_setopt(curl, CURLOPT_PROXY, "");
+	else if (strlen(__pwdgrpd_config.proxy) > 0)
+		curl_easy_setopt(curl, CURLOPT_PROXY, __pwdgrpd_config.proxy);
+
 	// if curl request failed (e.g. timeout) ...
 	if (curl_easy_perform(curl) != CURLE_OK) {*errnop = EIO; ret = NSS_STATUS_TRYAGAIN; goto end;}
 
@@ -418,6 +424,17 @@ static int __pwdgrpd_parse_config(
 
 	if (strcmp(section, "pwdgrpd") == 0 && strcmp(name, "endpoint") == 0) {
 		strcpy((char *) config->endpoint, value);
+		return 1;
+	}
+
+	if (strcmp(section, "pwdgrpd") == 0 && strcmp(name, "proxy") == 0) {
+		strcpy((char *) config->proxy, value);
+		return 1;
+	}
+
+	if (strcmp(section, "pwdgrpd") == 0 && strcmp(name, "ignore_proxy") == 0) {
+		if (strcmp("true", value) == 0) config->ignore_proxy = true;
+		if (strcmp("false", value) == 0) config->ignore_proxy = false;
 		return 1;
 	}
 
