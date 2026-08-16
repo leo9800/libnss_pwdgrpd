@@ -39,15 +39,15 @@ struct pwdgrpd_ents {
 	off_t grp_off;
 };
 
-static struct pwdgrpd_config __pwdgrpd_config = {.ok = false, .endpoint = "\x00", .proxy = "\x00", .ignore_proxy = false, .timeout = 10};
-static struct pwdgrpd_ents __pwdgrpd_ents = {.pwds = NULL, .grps = NULL, .pwd_off = -1, .grp_off = -1};
+static struct pwdgrpd_config pwdgrpd_config = {.ok = false, .endpoint = "\x00", .proxy = "\x00", .ignore_proxy = false, .timeout = 10};
+static struct pwdgrpd_ents pwdgrpd_ents = {.pwds = NULL, .grps = NULL, .pwd_off = -1, .grp_off = -1};
 
-static int __pwdgrpd_parse_config(void *, const char *, const char *, const char *);
-static size_t __pwdgrpd_curl_write_cb(void *, size_t, size_t, void *);
-static inline enum nss_status __pwdgrpd_curl(const char *, struct json_object **, int *);
-static inline char *__pwdgrpd_safe_bufcpy(const char *, char **, const char *, const size_t);
-static inline enum nss_status __pwdgrpd_parse_pw_json(const struct json_object *, struct passwd *, char *, size_t, int *);
-static inline enum nss_status __pwdgrpd_parse_gr_json(const struct json_object *, struct group *, char *, size_t, int *);
+static int pwdgrpd_parse_config_cb(void *, const char *, const char *, const char *);
+static size_t pwdgrpd_curl_write_cb(void *, size_t, size_t, void *);
+static inline enum nss_status pwdgrpd_curl(const char *, struct json_object **, int *);
+static inline enum nss_status pwdgrpd_parse_pw_json(const struct json_object *, struct passwd *, char *, size_t, int *);
+static inline enum nss_status pwdgrpd_parse_gr_json(const struct json_object *, struct group *, char *, size_t, int *);
+static inline char *pwdgrpd_safe_bufcpy(const char *, char **, const char *, const size_t);
 
 struct binary_string {
 	size_t size;
@@ -67,12 +67,12 @@ enum nss_status _nss_pwdgrpd_getpwnam_r(
 	enum nss_status ret;
 	struct json_object *json;
 
-	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
-	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", pwdgrpd_config.endpoint, name);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
-	ret = __pwdgrpd_curl(url, &json, errnop);
+	ret = pwdgrpd_curl(url, &json, errnop);
 	if (ret != NSS_STATUS_SUCCESS) goto end;
-	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
+	ret = pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
 end:
 	if (json) {json_object_put(json); json = NULL;}
 	return ret;
@@ -91,12 +91,12 @@ enum nss_status _nss_pwdgrpd_getpwuid_r(
 	enum nss_status ret;
 	struct json_object *json;
 
-	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
-	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", __pwdgrpd_config.endpoint, uid);
+	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", pwdgrpd_config.endpoint, uid);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
-	ret = __pwdgrpd_curl(url, &json, errnop);
+	ret = pwdgrpd_curl(url, &json, errnop);
 	if (ret != NSS_STATUS_SUCCESS) goto end;
-	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
+	ret = pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
 end:
 	if (json) {json_object_put(json); json = NULL;}
 	return ret;
@@ -115,12 +115,12 @@ enum nss_status _nss_pwdgrpd_getgrnam_r(
 	enum nss_status ret;
 	struct json_object *json;
 
-	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
-	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", pwdgrpd_config.endpoint, name);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
-	ret = __pwdgrpd_curl(url, &json, errnop);
+	ret = pwdgrpd_curl(url, &json, errnop);
 	if (ret != NSS_STATUS_SUCCESS) goto end;
-	ret = __pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
+	ret = pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
 end:
 	if (json) {json_object_put(json); json = NULL;}
 	return ret;
@@ -139,12 +139,12 @@ enum nss_status _nss_pwdgrpd_getgrgid_r(
 	enum nss_status ret;
 	struct json_object *json;
 
-	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
-	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", __pwdgrpd_config.endpoint, gid);
+	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", pwdgrpd_config.endpoint, gid);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
-	ret = __pwdgrpd_curl(url, &json, errnop);
+	ret = pwdgrpd_curl(url, &json, errnop);
 	if (ret != NSS_STATUS_SUCCESS) goto end;
-	ret = __pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
+	ret = pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
 end:
 	if (json) {json_object_put(json); json = NULL;}
 	return ret;
@@ -168,10 +168,10 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	size_t newsize;
 	gid_t *new_groupsp;
 
-	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
-	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", __pwdgrpd_config.endpoint, user);
+	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", pwdgrpd_config.endpoint, user);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;};
-	ret = __pwdgrpd_curl(url, &json, errnop);
+	ret = pwdgrpd_curl(url, &json, errnop);
 	if (ret != NSS_STATUS_SUCCESS) {goto end;}
 	// returns must be an array of additional gids
 	if (json_object_get_type(json) != json_type_array) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
@@ -214,29 +214,29 @@ enum nss_status _nss_pwdgrpd_getpwent_r(
 	size_t npwds;
 	struct json_object *j_pwd;
 
-	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	// if not initialized ...
 	// this could happen because glibc allows user to call get[pw,gr]ent() without calling set[pw,gr]ent() in advance
-	if (__pwdgrpd_ents.pwd_off == -1) {
+	if (pwdgrpd_ents.pwd_off == -1) {
 		// we try initialize it ...
 		_nss_pwdgrpd_setpwent();
 		// if it won't initialize again, then we assume doing so is not supported
 		// as the server rejects enumeration
-		if (__pwdgrpd_ents.pwd_off == -1) {ret = NSS_STATUS_UNAVAIL; goto end;}
+		if (pwdgrpd_ents.pwd_off == -1) {ret = NSS_STATUS_UNAVAIL; goto end;}
 	}
-	npwds = json_object_array_length(__pwdgrpd_ents.pwds);
+	npwds = json_object_array_length(pwdgrpd_ents.pwds);
 	// if we reached the last child ...
-	if (__pwdgrpd_ents.pwd_off >= npwds) {ret = NSS_STATUS_NOTFOUND; goto end;}
+	if (pwdgrpd_ents.pwd_off >= npwds) {ret = NSS_STATUS_NOTFOUND; goto end;}
 
-	j_pwd = json_object_array_get_idx(__pwdgrpd_ents.pwds, __pwdgrpd_ents.pwd_off);
+	j_pwd = json_object_array_get_idx(pwdgrpd_ents.pwds, pwdgrpd_ents.pwd_off);
 
 	// if we could not get child ...
 	// this is unlikely to happen unless something goes really wrong that desync pwds and pwd_off
 	if (!j_pwd) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
 
-	ret = __pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
+	ret = pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
 	if (ret != NSS_STATUS_SUCCESS) goto end;
-	__pwdgrpd_ents.pwd_off += 1;
+	pwdgrpd_ents.pwd_off += 1;
 end:
 	return ret;
 }
@@ -247,35 +247,35 @@ enum nss_status _nss_pwdgrpd_setpwent()
 	int snprintf_ret;
 	int errnop;
 
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (!pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
-	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", __pwdgrpd_config.endpoint);
+	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", pwdgrpd_config.endpoint);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 
-	__pwdgrpd_curl(url, &__pwdgrpd_ents.pwds, &errnop);
+	pwdgrpd_curl(url, &pwdgrpd_ents.pwds, &errnop);
 
-	if (!__pwdgrpd_ents.pwds) {
-		__pwdgrpd_ents.pwd_off = -1;
+	if (!pwdgrpd_ents.pwds) {
+		pwdgrpd_ents.pwd_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	if (json_object_get_type(__pwdgrpd_ents.pwds) != json_type_array) {
-		json_object_put(__pwdgrpd_ents.pwds);
-		__pwdgrpd_ents.pwds = NULL;
-		__pwdgrpd_ents.pwd_off = -1;
+	if (json_object_get_type(pwdgrpd_ents.pwds) != json_type_array) {
+		json_object_put(pwdgrpd_ents.pwds);
+		pwdgrpd_ents.pwds = NULL;
+		pwdgrpd_ents.pwd_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	__pwdgrpd_ents.pwd_off = 0;
+	pwdgrpd_ents.pwd_off = 0;
 	return NSS_STATUS_SUCCESS;
 }
 
 enum nss_status _nss_pwdgrpd_endpwent()
 {
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-	if (__pwdgrpd_ents.pwds) json_object_put(__pwdgrpd_ents.pwds);
-	__pwdgrpd_ents.pwds = NULL;
-	__pwdgrpd_ents.pwd_off = -1;
+	if (!pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (pwdgrpd_ents.pwds) json_object_put(pwdgrpd_ents.pwds);
+	pwdgrpd_ents.pwds = NULL;
+	pwdgrpd_ents.pwd_off = -1;
 	return NSS_STATUS_SUCCESS;
 }
 
@@ -290,29 +290,29 @@ enum nss_status _nss_pwdgrpd_getgrent_r(
 	size_t ngrps;
 	struct json_object *j_grp;
 
-	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	// if not initialized ...
 	// this could happen because glibc allows user to call get[pw,gr]ent() without calling set[pw,gr]ent() in advance
-	if (__pwdgrpd_ents.grp_off == -1) {
+	if (pwdgrpd_ents.grp_off == -1) {
 		// we try initialize it ...
 		_nss_pwdgrpd_setgrent();
 		// if it won't initialize again, then we assume doing so is not supported
 		// as the server rejects enumeration
-		if (__pwdgrpd_ents.grp_off == -1) {ret = NSS_STATUS_UNAVAIL; goto end;}
+		if (pwdgrpd_ents.grp_off == -1) {ret = NSS_STATUS_UNAVAIL; goto end;}
 	}
-	ngrps = json_object_array_length(__pwdgrpd_ents.grps);
+	ngrps = json_object_array_length(pwdgrpd_ents.grps);
 	// if we reached the last child ...
-	if (__pwdgrpd_ents.grp_off >= ngrps) {ret = NSS_STATUS_NOTFOUND; goto end;}
+	if (pwdgrpd_ents.grp_off >= ngrps) {ret = NSS_STATUS_NOTFOUND; goto end;}
 
-	j_grp = json_object_array_get_idx(__pwdgrpd_ents.grps, __pwdgrpd_ents.grp_off);
+	j_grp = json_object_array_get_idx(pwdgrpd_ents.grps, pwdgrpd_ents.grp_off);
 
 	// if we could not get child ...
 	// this is unlikely to happen unless something goes really wrong that desync pwds and pwd_off
 	if (!j_grp) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
 
-	ret = __pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
+	ret = pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
 	if (ret != NSS_STATUS_SUCCESS) goto end;
-	__pwdgrpd_ents.grp_off += 1;
+	pwdgrpd_ents.grp_off += 1;
 end:
 	return ret;
 }
@@ -323,39 +323,39 @@ enum nss_status _nss_pwdgrpd_setgrent()
 	int snprintf_ret;
 	int errnop;
 
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (!pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
-	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", __pwdgrpd_config.endpoint);
+	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", pwdgrpd_config.endpoint);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 
-	__pwdgrpd_curl(url, &__pwdgrpd_ents.grps, &errnop);
+	pwdgrpd_curl(url, &pwdgrpd_ents.grps, &errnop);
 
-	if (!__pwdgrpd_ents.grps) {
-		__pwdgrpd_ents.grp_off = -1;
+	if (!pwdgrpd_ents.grps) {
+		pwdgrpd_ents.grp_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	if (json_object_get_type(__pwdgrpd_ents.grps) != json_type_array) {
-		json_object_put(__pwdgrpd_ents.grps);
-		__pwdgrpd_ents.grps = NULL;
-		__pwdgrpd_ents.grp_off = -1;
+	if (json_object_get_type(pwdgrpd_ents.grps) != json_type_array) {
+		json_object_put(pwdgrpd_ents.grps);
+		pwdgrpd_ents.grps = NULL;
+		pwdgrpd_ents.grp_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	__pwdgrpd_ents.grp_off = 0;
+	pwdgrpd_ents.grp_off = 0;
 	return NSS_STATUS_SUCCESS;
 }
 
 enum nss_status _nss_pwdgrpd_endgrent()
 {
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-	if (__pwdgrpd_ents.grps) json_object_put(__pwdgrpd_ents.grps);
-	__pwdgrpd_ents.grps = NULL;
-	__pwdgrpd_ents.grp_off = -1;
+	if (!pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (pwdgrpd_ents.grps) json_object_put(pwdgrpd_ents.grps);
+	pwdgrpd_ents.grps = NULL;
+	pwdgrpd_ents.grp_off = -1;
 	return NSS_STATUS_SUCCESS;
 }
 
-static inline enum nss_status __pwdgrpd_curl(
+static inline enum nss_status pwdgrpd_curl(
 	const char *url,
 	struct json_object **json,
 	int *errnop
@@ -376,14 +376,14 @@ static inline enum nss_status __pwdgrpd_curl(
 	if (!curl) {*errnop = ENOMEM; ret = NSS_STATUS_TRYAGAIN; goto end;}
 
 	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &pwdgrpd_curl_write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_response);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, __pwdgrpd_config.timeout);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, pwdgrpd_config.timeout);
 
-	if (__pwdgrpd_config.ignore_proxy)
+	if (pwdgrpd_config.ignore_proxy)
 		curl_easy_setopt(curl, CURLOPT_PROXY, "");
-	else if (strlen(__pwdgrpd_config.proxy) > 0)
-		curl_easy_setopt(curl, CURLOPT_PROXY, __pwdgrpd_config.proxy);
+	else if (strlen(pwdgrpd_config.proxy) > 0)
+		curl_easy_setopt(curl, CURLOPT_PROXY, pwdgrpd_config.proxy);
 
 	// if curl request failed (e.g. timeout) ...
 	if (curl_easy_perform(curl) != CURLE_OK) {*errnop = EIO; ret = NSS_STATUS_TRYAGAIN; goto end;}
@@ -413,7 +413,7 @@ end:
 	return ret;
 }
 
-static int __pwdgrpd_parse_config(
+static int pwdgrpd_parse_config_cb(
 	void *userp,
 	const char *section,
 	const char *name,
@@ -446,7 +446,7 @@ static int __pwdgrpd_parse_config(
 	return 0;
 }
 
-static size_t __pwdgrpd_curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp)
+static size_t pwdgrpd_curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp)
 {
 	size_t real_size = size * nmemb;
 	struct binary_string *bs = (struct binary_string *) userp;
@@ -461,7 +461,7 @@ static size_t __pwdgrpd_curl_write_cb(void *contents, size_t size, size_t nmemb,
 	return real_size;
 }
 
-static inline char *__pwdgrpd_safe_bufcpy(const char *src, char **ptr, const char *start, const size_t maxlen)
+static inline char *pwdgrpd_safe_bufcpy(const char *src, char **ptr, const char *start, const size_t maxlen)
 {
 	size_t len = strlen(src);
 	// we cannot copy, overflow!
@@ -474,7 +474,7 @@ static inline char *__pwdgrpd_safe_bufcpy(const char *src, char **ptr, const cha
 	return oldptr;
 }
 
-static inline enum nss_status __pwdgrpd_parse_pw_json(
+static inline enum nss_status pwdgrpd_parse_pw_json(
 	const struct json_object *json,
 	struct passwd *result,
 	char *buffer,
@@ -499,11 +499,11 @@ static inline enum nss_status __pwdgrpd_parse_pw_json(
 
 	char *ptr = buffer;
 
-	result->pw_name   = __pwdgrpd_safe_bufcpy(json_object_get_string(j_name)  , &ptr, buffer, buflen);
-	result->pw_passwd = __pwdgrpd_safe_bufcpy(json_object_get_string(j_passwd), &ptr, buffer, buflen);
-	result->pw_gecos  = __pwdgrpd_safe_bufcpy(json_object_get_string(j_gecos) , &ptr, buffer, buflen);
-	result->pw_dir    = __pwdgrpd_safe_bufcpy(json_object_get_string(j_dir)   , &ptr, buffer, buflen);
-	result->pw_shell  = __pwdgrpd_safe_bufcpy(json_object_get_string(j_shell) , &ptr, buffer, buflen);
+	result->pw_name   = pwdgrpd_safe_bufcpy(json_object_get_string(j_name)  , &ptr, buffer, buflen);
+	result->pw_passwd = pwdgrpd_safe_bufcpy(json_object_get_string(j_passwd), &ptr, buffer, buflen);
+	result->pw_gecos  = pwdgrpd_safe_bufcpy(json_object_get_string(j_gecos) , &ptr, buffer, buflen);
+	result->pw_dir    = pwdgrpd_safe_bufcpy(json_object_get_string(j_dir)   , &ptr, buffer, buflen);
+	result->pw_shell  = pwdgrpd_safe_bufcpy(json_object_get_string(j_shell) , &ptr, buffer, buflen);
 	result->pw_uid    = (uid_t) json_object_get_int(j_uid);
 	result->pw_gid    = (gid_t) json_object_get_int(j_gid);
 
@@ -515,7 +515,7 @@ static inline enum nss_status __pwdgrpd_parse_pw_json(
 	return NSS_STATUS_SUCCESS;
 }
 
-static inline enum nss_status __pwdgrpd_parse_gr_json(
+static inline enum nss_status pwdgrpd_parse_gr_json(
 	const struct json_object *json,
 	struct group *result,
 	char *buffer,
@@ -539,8 +539,8 @@ static inline enum nss_status __pwdgrpd_parse_gr_json(
 	char *ptr = buffer;
 
 	result->gr_gid    = (gid_t) json_object_get_int(j_gid);
-	result->gr_name   = __pwdgrpd_safe_bufcpy(json_object_get_string(j_name)  , &ptr, buffer, buflen);
-	result->gr_passwd = __pwdgrpd_safe_bufcpy(json_object_get_string(j_passwd), &ptr, buffer, buflen);
+	result->gr_name   = pwdgrpd_safe_bufcpy(json_object_get_string(j_name)  , &ptr, buffer, buflen);
+	result->gr_passwd = pwdgrpd_safe_bufcpy(json_object_get_string(j_passwd), &ptr, buffer, buflen);
 
 	size_t nmems = json_object_array_length(j_mem);
 	char **mem = (char **) ptr;
@@ -553,7 +553,7 @@ static inline enum nss_status __pwdgrpd_parse_gr_json(
 
 	for (int i = 0; i < nmems; i++) {
 		json_object *m = json_object_array_get_idx(j_mem, i);
-		mem[i] = __pwdgrpd_safe_bufcpy(json_object_get_string(m), &ptr_mem_childs, buffer, buflen);
+		mem[i] = pwdgrpd_safe_bufcpy(json_object_get_string(m), &ptr_mem_childs, buffer, buflen);
 		if (mem[i] == NULL) {
 			*errnop = ERANGE;
 			return NSS_STATUS_TRYAGAIN;
@@ -575,21 +575,21 @@ void __pwdgrpd_init(void) {
 	CURLU *curlu;
 	CURLUcode curlu_code;
 
-	ini_parse(LIBNSS_PWDGRPD_CONFIG_PATH, &__pwdgrpd_parse_config, (void *) &__pwdgrpd_config);
-	if (__pwdgrpd_config.timeout < 0) goto fail;
+	ini_parse(LIBNSS_PWDGRPD_CONFIG_PATH, &pwdgrpd_parse_config_cb, (void *) &pwdgrpd_config);
+	if (pwdgrpd_config.timeout < 0) goto fail;
 #if LIBNSS_PWDGRPD_HTTPS_ONLY == true
-	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8)) goto fail;
+	if (strncmp(pwdgrpd_config.endpoint, "https://", 8)) goto fail;
 #else
-	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8) && \
-		strncmp(__pwdgrpd_config.endpoint, "http://", 7)) goto fail;
+	if (strncmp(pwdgrpd_config.endpoint, "https://", 8) && \
+		strncmp(pwdgrpd_config.endpoint, "http://", 7)) goto fail;
 #endif
 	curlu = curl_url();
 	if (!curlu) goto fail;
-	curlu_code = curl_url_set(curlu, CURLUPART_URL, __pwdgrpd_config.endpoint, CURLU_DISALLOW_USER | CURLU_GUESS_SCHEME);
+	curlu_code = curl_url_set(curlu, CURLUPART_URL, pwdgrpd_config.endpoint, CURLU_DISALLOW_USER | CURLU_GUESS_SCHEME);
 	curl_url_cleanup(curlu);
 	if (curlu_code != CURLUE_OK) goto fail;
-	__pwdgrpd_config.ok = true;
+	pwdgrpd_config.ok = true;
 	return;
 fail:
-	__pwdgrpd_config.ok = false;
+	pwdgrpd_config.ok = false;
 }
