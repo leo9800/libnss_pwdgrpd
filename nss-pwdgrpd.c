@@ -2,6 +2,7 @@
 #include <curl/urlapi.h>
 #include <json-c/json.h>
 #include <curl/curl.h>
+#include <json-c/json_object.h>
 #include <nss.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,8 +47,6 @@ static bool __pwdgrpd_check_config(void);
 static size_t __pwdgrpd_curl_write_cb(void *, size_t, size_t, void *);
 static inline enum nss_status __pwdgrpd_curl(const char *, struct json_object **, int *);
 static inline char *__pwdgrpd_safe_bufcpy(const char *, char **, const char *, const size_t);
-static inline enum nss_status __pwdgrpd_pw(const char *, struct passwd *, char *, size_t, int *);
-static inline enum nss_status __pwdgrpd_gr(const char *, struct group *, char *, size_t, int *);
 static inline enum nss_status __pwdgrpd_parse_pw_json(const struct json_object *, struct passwd *, char *, size_t, int *);
 static inline enum nss_status __pwdgrpd_parse_gr_json(const struct json_object *, struct group *, char *, size_t, int *);
 
@@ -65,11 +64,19 @@ enum nss_status _nss_pwdgrpd_getpwnam_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
-	int ret;
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-	ret = snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", __pwdgrpd_config.endpoint, name);
-	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-	return __pwdgrpd_pw(url, result, buffer, buflen, errnop);
+	int snprintf_ret;
+	enum nss_status ret;
+	struct json_object *json;
+
+	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
+	ret = __pwdgrpd_curl(url, &json, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
+	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
+end:
+	if (json) {json_object_put(json); json = NULL;}
+	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_getpwuid_r(
@@ -81,11 +88,19 @@ enum nss_status _nss_pwdgrpd_getpwuid_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
-	int ret;
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-	ret = snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", __pwdgrpd_config.endpoint, uid);
-	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-	return __pwdgrpd_pw(url, result, buffer, buflen, errnop);
+	int snprintf_ret;
+	enum nss_status ret;
+	struct json_object *json;
+
+	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", __pwdgrpd_config.endpoint, uid);
+	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
+	ret = __pwdgrpd_curl(url, &json, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
+	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
+end:
+	if (json) {json_object_put(json); json = NULL;}
+	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_getgrnam_r(
@@ -97,11 +112,19 @@ enum nss_status _nss_pwdgrpd_getgrnam_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
-	int ret;
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-	ret = snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", __pwdgrpd_config.endpoint, name);
-	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-	return __pwdgrpd_gr(url, result, buffer, buflen, errnop);
+	int snprintf_ret;
+	enum nss_status ret;
+	struct json_object *json;
+
+	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", __pwdgrpd_config.endpoint, name);
+	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
+	ret = __pwdgrpd_curl(url, &json, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
+	ret = __pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
+end:
+	if (json) {json_object_put(json); json = NULL;}
+	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_getgrgid_r(
@@ -113,11 +136,19 @@ enum nss_status _nss_pwdgrpd_getgrgid_r(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
-	int ret;
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-	ret = snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", __pwdgrpd_config.endpoint, gid);
-	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-	return __pwdgrpd_gr(url, result, buffer, buflen, errnop);
+	int snprintf_ret;
+	enum nss_status ret;
+	struct json_object *json;
+
+	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", __pwdgrpd_config.endpoint, gid);
+	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
+	ret = __pwdgrpd_curl(url, &json, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
+	ret = __pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
+end:
+	if (json) {json_object_put(json); json = NULL;}
+	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_initgroups_dyn(
@@ -419,44 +450,6 @@ static inline char *__pwdgrpd_safe_bufcpy(const char *src, char **ptr, const cha
 	(*ptr)[len] = '\x00';
 	*ptr += len + 1;
 	return oldptr;
-}
-
-static inline enum nss_status __pwdgrpd_pw(
-	const char *url,
-	struct passwd *result,
-	char *buffer,
-	size_t buflen,
-	int *errnop
-)
-{
-	enum nss_status ret;
-	struct json_object *json;
-
-	ret = __pwdgrpd_curl(url, &json, errnop);
-	if (ret != NSS_STATUS_SUCCESS) goto end;
-	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
-end:
-	if (json) {json_object_put(json); json = NULL;}
-	return ret;
-}
-
-static inline enum nss_status __pwdgrpd_gr(
-	const char *url,
-	struct group *result,
-	char *buffer,
-	size_t buflen,
-	int *errnop
-)
-{
-	enum nss_status ret;
-	struct json_object *json;
-
-	ret = __pwdgrpd_curl(url, &json, errnop);
-	if (ret != NSS_STATUS_SUCCESS) goto end;
-	ret = __pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
-end:
-	if (json) {json_object_put(json); json = NULL;}
-	return ret;
 }
 
 static inline enum nss_status __pwdgrpd_parse_pw_json(
