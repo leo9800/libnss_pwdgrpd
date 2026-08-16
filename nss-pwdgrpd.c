@@ -2,8 +2,6 @@
 #include <curl/urlapi.h>
 #include <json-c/json.h>
 #include <curl/curl.h>
-#include <json-c/json_object.h>
-#include <json-c/json_types.h>
 #include <nss.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +44,7 @@ static struct pwdgrpd_ents __pwdgrpd_ents = {.pwds = NULL, .grps = NULL, .pwd_of
 static int __pwdgrpd_parse_config(void *, const char *, const char *, const char *);
 static bool __pwdgrpd_check_config(void);
 static size_t __pwdgrpd_curl_write_cb(void *, size_t, size_t, void *);
+static inline enum nss_status __pwdgrpd_curl(const char *, struct json_object **, int *);
 static inline char *__pwdgrpd_safe_bufcpy(const char *, char **, const char *, const size_t);
 static inline enum nss_status __pwdgrpd_pw(const char *, struct passwd *, char *, size_t, int *);
 static inline enum nss_status __pwdgrpd_gr(const char *, struct group *, char *, size_t, int *);
@@ -131,63 +130,19 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	int *errnop
 )
 {
-	int http_status;
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
+	struct json_object *json;
+	enum nss_status s;
 
 	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
 	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", __pwdgrpd_config.endpoint, user);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-	curl_global_init(CURL_GLOBAL_DEFAULT);
-	CURL *curl = curl_easy_init();
-	if (!curl) {
-		curl_global_cleanup();
-		*errnop = ENOMEM;
-		return NSS_STATUS_UNAVAIL;
-	}
 
-	struct binary_string http_res = {.payload = malloc(1), .size = 0};
-	http_res.payload[0] = 0;
+	s = __pwdgrpd_curl(url, &json, errnop);
 
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_res);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
-	CURLcode res = curl_easy_perform(curl);
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-	curl_easy_cleanup(curl);
-	curl_global_cleanup();
-
-	if (res != CURLE_OK) {
-		free(http_res.payload);
-		*errnop = EIO;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status == 403) {
-		free(http_res.payload);
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status == 404) {
-		free(http_res.payload);
-		return NSS_STATUS_NOTFOUND;
-	}
-
-	if (http_status != 200) {
-		free(http_res.payload);
-		*errnop = EINVAL;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	struct json_object *json = json_tokener_parse(http_res.payload);
-	free(http_res.payload);
-
-	if (!json) {
-		*errnop = EINVAL;
-		return NSS_STATUS_TRYAGAIN;
-	}
+	if (s != NSS_STATUS_SUCCESS) return s;
 
 	if (json_object_get_type(json) != json_type_array) {
 		json_object_put(json);
@@ -253,50 +208,16 @@ enum nss_status _nss_pwdgrpd_getpwent_r(
 
 enum nss_status _nss_pwdgrpd_setpwent()
 {
-	int http_status;
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
+	int errnop;
 
 	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
 	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", __pwdgrpd_config.endpoint);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-	curl_global_init(CURL_GLOBAL_DEFAULT);
-	CURL *curl = curl_easy_init();
-	if (!curl) {
-		curl_global_cleanup();
-		return NSS_STATUS_UNAVAIL;
-	}
 
-	struct binary_string http_res = {.payload = malloc(1), .size = 0};
-	http_res.payload[0] = 0;
-
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_res);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
-	CURLcode res = curl_easy_perform(curl);
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-	curl_easy_cleanup(curl);
-	curl_global_cleanup();
-
-	if (res != CURLE_OK) {
-		free(http_res.payload);
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status == 403) {
-		free(http_res.payload);
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status != 200) {
-		free(http_res.payload);
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	__pwdgrpd_ents.pwds = json_tokener_parse(http_res.payload);
-	free(http_res.payload);
+	__pwdgrpd_curl(url, &__pwdgrpd_ents.pwds, &errnop);
 
 	if (!__pwdgrpd_ents.pwds) {
 		__pwdgrpd_ents.pwd_off = -1;
@@ -353,50 +274,16 @@ enum nss_status _nss_pwdgrpd_getgrent_r(
 
 enum nss_status _nss_pwdgrpd_setgrent()
 {
-	int http_status;
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
+	int errnop;
 
 	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
 	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", __pwdgrpd_config.endpoint);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-	curl_global_init(CURL_GLOBAL_DEFAULT);
-	CURL *curl = curl_easy_init();
-	if (!curl) {
-		curl_global_cleanup();
-		return NSS_STATUS_UNAVAIL;
-	}
 
-	struct binary_string http_res = {.payload = malloc(1), .size = 0};
-	http_res.payload[0] = 0;
-
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_res);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
-	CURLcode res = curl_easy_perform(curl);
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-	curl_easy_cleanup(curl);
-	curl_global_cleanup();
-
-	if (res != CURLE_OK) {
-		free(http_res.payload);
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status == 403) {
-		free(http_res.payload);
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status != 200) {
-		free(http_res.payload);
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	__pwdgrpd_ents.grps = json_tokener_parse(http_res.payload);
-	free(http_res.payload);
+	__pwdgrpd_curl(url, &__pwdgrpd_ents.grps, &errnop);
 
 	if (!__pwdgrpd_ents.grps) {
 		__pwdgrpd_ents.grp_off = -1;
@@ -421,6 +308,59 @@ enum nss_status _nss_pwdgrpd_endgrent()
 	__pwdgrpd_ents.grps = NULL;
 	__pwdgrpd_ents.grp_off = -1;
 	return NSS_STATUS_SUCCESS;
+}
+
+static inline enum nss_status __pwdgrpd_curl(
+	const char *url,
+	struct json_object **json,
+	int *errnop
+)
+{
+	enum nss_status ret;
+	CURL *curl;
+	int http_status;
+	struct binary_string http_response;
+
+	http_response.size = 0;
+	http_response.payload = malloc(1);
+	http_response.payload[0] = '\x00';
+
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	curl = curl_easy_init();
+
+	if (!curl) {*errnop = ENOMEM; ret = NSS_STATUS_TRYAGAIN; goto end;}
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_response);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+
+	// if curl request failed (e.g. timeout) ...
+	if (curl_easy_perform(curl) != CURLE_OK) {*errnop = EIO; ret = NSS_STATUS_TRYAGAIN; goto end;}
+
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
+
+	// if getpwall/getgrall and server disables enumeration ...
+	if (http_status == 403) {ret = NSS_STATUS_UNAVAIL; goto end;}
+	// if get[pw,gr][uid,gid,nam] could not find such user/group ...
+	if (http_status == 404) {ret = NSS_STATUS_NOTFOUND; goto end;}
+	// other status code than 200
+	// not likely to happen unless server not properly implemented
+	if (http_status != 200) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
+
+	*json = json_tokener_parse(http_response.payload);
+
+	// if server did not return a valid json ...
+	// not likely to happend unless server not properly implemented (again)
+	if (!*json) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
+
+	// succeed ...
+	ret = NSS_STATUS_SUCCESS;
+end:
+	if (http_response.payload) {free(http_response.payload); http_response.payload = NULL;}
+	if (curl) {curl_easy_cleanup(curl); curl = NULL;}
+	curl_global_cleanup();
+	return ret;
 }
 
 static bool __pwdgrpd_check_config()
@@ -489,54 +429,14 @@ static inline enum nss_status __pwdgrpd_pw(
 	int *errnop
 )
 {
-	int http_status = -1;
 	enum nss_status ret;
+	struct json_object *json;
 
-	curl_global_init(CURL_GLOBAL_DEFAULT);
-	CURL *curl = curl_easy_init();
-	if (!curl) {
-		curl_global_cleanup();
-		*errnop = ENOMEM;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	struct binary_string http_res = {.payload = malloc(1), .size = 0};
-	http_res.payload[0] = 0;
-
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_res);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
-	CURLcode res = curl_easy_perform(curl);
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-	curl_easy_cleanup(curl);
-	curl_global_cleanup();
-
-	if (res != CURLE_OK) {
-		free(http_res.payload);
-		*errnop = EIO;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status == 404) {
-		free(http_res.payload);
-		return NSS_STATUS_NOTFOUND;
-	}
-
-	if (http_status != 200) {
-		free(http_res.payload);
-		*errnop = EINVAL;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	struct json_object *json = json_tokener_parse(http_res.payload);
-	free(http_res.payload);
-	if (!json) {
-		*errnop = EINVAL;
-		return NSS_STATUS_UNAVAIL;
-	}
+	ret = __pwdgrpd_curl(url, &json, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
 	ret = __pwdgrpd_parse_pw_json(json, result, buffer, buflen, errnop);
-	json_object_put(json);
+end:
+	if (json) {json_object_put(json); json = NULL;}
 	return ret;
 }
 
@@ -548,54 +448,14 @@ static inline enum nss_status __pwdgrpd_gr(
 	int *errnop
 )
 {
-	int http_status = -1;
 	enum nss_status ret;
+	struct json_object *json;
 
-	curl_global_init(CURL_GLOBAL_DEFAULT);
-	CURL *curl = curl_easy_init();
-	if (!curl) {
-		curl_global_cleanup();
-		*errnop = ENOMEM;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	struct binary_string http_res = {.payload = malloc(1), .size = 0};
-	http_res.payload[0] = 0;
-
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_res);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
-	CURLcode res = curl_easy_perform(curl);
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-	curl_easy_cleanup(curl);
-	curl_global_cleanup();
-
-	if (res != CURLE_OK) {
-		free(http_res.payload);
-		*errnop = EIO;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	if (http_status == 404) {
-		free(http_res.payload);
-		return NSS_STATUS_NOTFOUND;
-	}
-
-	if (http_status != 200) {
-		free(http_res.payload);
-		*errnop = EINVAL;
-		return NSS_STATUS_UNAVAIL;
-	}
-
-	struct json_object *json = json_tokener_parse(http_res.payload);
-	free(http_res.payload);
-	if (!json) {
-		*errnop = EINVAL;
-		return NSS_STATUS_UNAVAIL;
-	}
+	ret = __pwdgrpd_curl(url, &json, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
 	ret = __pwdgrpd_parse_gr_json(json, result, buffer, buflen, errnop);
-	json_object_put(json);
+end:
+	if (json) {json_object_put(json); json = NULL;}
 	return ret;
 }
 
