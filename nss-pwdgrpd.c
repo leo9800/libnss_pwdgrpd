@@ -162,50 +162,46 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 )
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
-	int ret;
+	int snprintf_ret;
 	struct json_object *json;
-	enum nss_status s;
+	enum nss_status ret;
+	size_t ngids;
+	size_t newsize;
+	gid_t *new_groupsp;
 
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-
-	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", __pwdgrpd_config.endpoint, user);
-	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
-
-	s = __pwdgrpd_curl(url, &json, errnop);
-
-	if (s != NSS_STATUS_SUCCESS) return s;
-
-	if (json_object_get_type(json) != json_type_array) {
-		json_object_put(json);
-		*errnop = EINVAL;
-		return NSS_STATUS_TRYAGAIN;
-	}
-
-	size_t ngids = json_object_array_length(json);
-
+	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", __pwdgrpd_config.endpoint, user);
+	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;};
+	ret = __pwdgrpd_curl(url, &json, errnop);
+	if (ret != NSS_STATUS_SUCCESS) {goto end;}
+	// returns must be an array of additional gids
+	if (json_object_get_type(json) != json_type_array) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
+	ngids = json_object_array_length(json);
+	// check if we need expand the groupsp array
 	if (*size - *start <= ngids + 1) { // 1 gid specified in param + other retrieved by API
-		// expand required ...
-		size_t newsize = limit > (*size * 2) ? (*size * 2) : limit;
-		gid_t *new_groupsp = realloc(*groupsp, newsize);
-		if (new_groupsp == NULL) {
-			json_object_put(json);
-			*errnop = ENOMEM;
-			return NSS_STATUS_TRYAGAIN;
-		}
+		// double the size if it is not exceeding the limit
+		newsize = limit > (*size * 2) ? (*size * 2) : limit;
+		new_groupsp = realloc(*groupsp, newsize);
+		// error out if we could not expand it due to OOM
+		if (new_groupsp == NULL) {*errnop = ENOMEM; ret = NSS_STATUS_TRYAGAIN; goto end;}
+		// copy pointer if expand succeeded
 		*groupsp = new_groupsp;
 	}
 
+	// add primary group of user (i.e. gid specified in passwd file)
 	(*groupsp)[*start] = group;
 	*start += 1;
 
+	// copy every single additional gid to groupsp
 	for (int i = 0; i < ngids; i++) {
-		struct json_object *item = json_object_array_get_idx(json, i);
-		(*groupsp)[*start] = (gid_t) json_object_get_int(item);
+		(*groupsp)[*start] = (gid_t) json_object_get_int(json_object_array_get_idx(json, i));
 		*start += 1;
 	}
 
-	json_object_put(json);
-	return NSS_STATUS_SUCCESS;
+	ret = NSS_STATUS_SUCCESS;
+end:
+	if (json) {json_object_put(json); json = NULL;};
+	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_getpwent_r(
@@ -215,38 +211,47 @@ enum nss_status _nss_pwdgrpd_getpwent_r(
 	int *errnop
 )
 {
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
-	if (__pwdgrpd_ents.pwd_off == -1) {
-		_nss_pwdgrpd_setpwent();
-		if (__pwdgrpd_ents.pwd_off == -1) {
-			*errnop = EIO;
-			return NSS_STATUS_UNAVAIL;
-		}
-	}
-	size_t npwds = json_object_array_length(__pwdgrpd_ents.pwds);
-	if (__pwdgrpd_ents.pwd_off >= npwds)
-		return NSS_STATUS_NOTFOUND;
-	struct json_object *j_pwd = json_object_array_get_idx(__pwdgrpd_ents.pwds, __pwdgrpd_ents.pwd_off);
-	if (!j_pwd) {
-		*errnop = EINVAL;
-		return NSS_STATUS_UNAVAIL;
-	}
+	enum nss_status ret;
+	size_t npwds;
+	struct json_object *j_pwd;
 
-	enum nss_status ret = __pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
-	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_ents.pwd_off += 1;
+	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	// if not initialized ...
+	// this could happen because glibc allows user to call get[pw,gr]ent() without calling set[pw,gr]ent() in advance
+	if (__pwdgrpd_ents.pwd_off == -1) {
+		// we try initialize it ...
+		_nss_pwdgrpd_setpwent();
+		// if it won't initialize again, then we assume doing so is not supported
+		// as the server rejects enumeration
+		if (__pwdgrpd_ents.pwd_off == -1) {ret = NSS_STATUS_UNAVAIL; goto end;}
+	}
+	npwds = json_object_array_length(__pwdgrpd_ents.pwds);
+	// if we reached the last child ...
+	if (__pwdgrpd_ents.pwd_off >= npwds) {ret = NSS_STATUS_NOTFOUND; goto end;}
+
+	j_pwd = json_object_array_get_idx(__pwdgrpd_ents.pwds, __pwdgrpd_ents.pwd_off);
+
+	// if we could not get child ...
+	// this is unlikely to happen unless something goes really wrong that desync pwds and pwd_off
+	if (!j_pwd) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
+
+	ret = __pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
+	__pwdgrpd_ents.pwd_off += 1;
+end:
 	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_setpwent()
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
-	int ret;
+	int snprintf_ret;
 	int errnop;
 
 	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
-	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", __pwdgrpd_config.endpoint);
-	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
+	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", __pwdgrpd_config.endpoint);
+	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 
 	__pwdgrpd_curl(url, &__pwdgrpd_ents.pwds, &errnop);
 
@@ -282,37 +287,47 @@ enum nss_status _nss_pwdgrpd_getgrent_r(
 	int *errnop
 )
 {
-	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	enum nss_status ret;
+	size_t ngrps;
+	struct json_object *j_grp;
+
+	if (!__pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
+	// if not initialized ...
+	// this could happen because glibc allows user to call get[pw,gr]ent() without calling set[pw,gr]ent() in advance
 	if (__pwdgrpd_ents.grp_off == -1) {
+		// we try initialize it ...
 		_nss_pwdgrpd_setgrent();
-		if (__pwdgrpd_ents.grp_off == -1) {
-			*errnop = EIO;
-			return NSS_STATUS_UNAVAIL;
-		}
+		// if it won't initialize again, then we assume doing so is not supported
+		// as the server rejects enumeration
+		if (__pwdgrpd_ents.grp_off == -1) {ret = NSS_STATUS_UNAVAIL; goto end;}
 	}
-	size_t ngrps = json_object_array_length(__pwdgrpd_ents.grps);
-	if (__pwdgrpd_ents.grp_off >= ngrps)
-		return NSS_STATUS_NOTFOUND;
-	struct json_object *j_grp = json_object_array_get_idx(__pwdgrpd_ents.grps, __pwdgrpd_ents.grp_off);
-	if (!j_grp) {
-		*errnop = EINVAL;
-		return NSS_STATUS_UNAVAIL;
-	}
-	enum nss_status ret = __pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
-	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_ents.grp_off += 1;
+	ngrps = json_object_array_length(__pwdgrpd_ents.grps);
+	// if we reached the last child ...
+	if (__pwdgrpd_ents.grp_off >= ngrps) {ret = NSS_STATUS_NOTFOUND; goto end;}
+
+	j_grp = json_object_array_get_idx(__pwdgrpd_ents.grps, __pwdgrpd_ents.grp_off);
+
+	// if we could not get child ...
+	// this is unlikely to happen unless something goes really wrong that desync pwds and pwd_off
+	if (!j_grp) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
+
+	ret = __pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
+	if (ret != NSS_STATUS_SUCCESS) goto end;
+	__pwdgrpd_ents.grp_off += 1;
+end:
 	return ret;
 }
 
 enum nss_status _nss_pwdgrpd_setgrent()
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
-	int ret;
+	int snprintf_ret;
 	int errnop;
 
 	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
-	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", __pwdgrpd_config.endpoint);
-	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
+	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", __pwdgrpd_config.endpoint);
+	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 
 	__pwdgrpd_curl(url, &__pwdgrpd_ents.grps, &errnop);
 
