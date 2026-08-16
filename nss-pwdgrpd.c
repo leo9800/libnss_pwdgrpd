@@ -29,15 +29,19 @@
 #endif
 
 struct pwdgrpd_config {
+	bool ok;
 	const char endpoint[LIBNSS_PWDGRPD_MAX_URL_LEN];
 };
 
-static bool __pwdgrpd_initialized = false;
-static struct pwdgrpd_config __pwdgrpd_config = {.endpoint = "\x00"};
-static struct json_object *__pwdgrpd_pwall = NULL;
-static struct json_object *__pwdgrpd_grall = NULL;
-off_t __pwdgrpd_pwall_off = -1;
-off_t __pwdgrpd_grall_off = -1;
+struct pwdgrpd_ents {
+	struct json_object *pwds;
+	struct json_object *grps;
+	off_t pwd_off;
+	off_t grp_off;
+};
+
+static struct pwdgrpd_config __pwdgrpd_config = {.ok = false, .endpoint = "\x00"};
+static struct pwdgrpd_ents __pwdgrpd_ents = {.pwds = NULL, .grps = NULL, .pwd_off = -1, .grp_off = -1};
 
 static int __pwdgrpd_parse_config(void *, const char *, const char *, const char *);
 static bool __pwdgrpd_check_config(void);
@@ -63,7 +67,7 @@ enum nss_status _nss_pwdgrpd_getpwnam_r(
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 	ret = snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", __pwdgrpd_config.endpoint, name);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_pw(url, result, buffer, buflen, errnop);
@@ -79,7 +83,7 @@ enum nss_status _nss_pwdgrpd_getpwuid_r(
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 	ret = snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", __pwdgrpd_config.endpoint, uid);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_pw(url, result, buffer, buflen, errnop);
@@ -95,7 +99,7 @@ enum nss_status _nss_pwdgrpd_getgrnam_r(
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 	ret = snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", __pwdgrpd_config.endpoint, name);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_gr(url, result, buffer, buflen, errnop);
@@ -111,7 +115,7 @@ enum nss_status _nss_pwdgrpd_getgrgid_r(
 {
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 	ret = snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", __pwdgrpd_config.endpoint, gid);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
 	return __pwdgrpd_gr(url, result, buffer, buflen, errnop);
@@ -131,7 +135,7 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
 
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
 	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", __pwdgrpd_config.endpoint, user);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
@@ -225,25 +229,25 @@ enum nss_status _nss_pwdgrpd_getpwent_r(
 	int *errnop
 )
 {
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	if (__pwdgrpd_pwall_off == -1) {
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (__pwdgrpd_ents.pwd_off == -1) {
 		_nss_pwdgrpd_setpwent();
-		if (__pwdgrpd_pwall_off == -1) {
+		if (__pwdgrpd_ents.pwd_off == -1) {
 			*errnop = EIO;
 			return NSS_STATUS_UNAVAIL;
 		}
 	}
-	size_t npwds = json_object_array_length(__pwdgrpd_pwall);
-	if (__pwdgrpd_pwall_off >= npwds)
+	size_t npwds = json_object_array_length(__pwdgrpd_ents.pwds);
+	if (__pwdgrpd_ents.pwd_off >= npwds)
 		return NSS_STATUS_NOTFOUND;
-	struct json_object *j_pwd = json_object_array_get_idx(__pwdgrpd_pwall, __pwdgrpd_pwall_off);
+	struct json_object *j_pwd = json_object_array_get_idx(__pwdgrpd_ents.pwds, __pwdgrpd_ents.pwd_off);
 	if (!j_pwd) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
 
 	enum nss_status ret = __pwdgrpd_parse_pw_json(j_pwd, result, buffer, buflen, errnop);
-	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_pwall_off += 1;
+	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_ents.pwd_off += 1;
 	return ret;
 }
 
@@ -253,7 +257,7 @@ enum nss_status _nss_pwdgrpd_setpwent()
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
 
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
 	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getpwall?t=json", __pwdgrpd_config.endpoint);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
@@ -291,31 +295,31 @@ enum nss_status _nss_pwdgrpd_setpwent()
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	__pwdgrpd_pwall = json_tokener_parse(http_res.payload);
+	__pwdgrpd_ents.pwds = json_tokener_parse(http_res.payload);
 	free(http_res.payload);
 
-	if (!__pwdgrpd_pwall) {
-		__pwdgrpd_pwall_off = -1;
+	if (!__pwdgrpd_ents.pwds) {
+		__pwdgrpd_ents.pwd_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	if (json_object_get_type(__pwdgrpd_pwall) != json_type_array) {
-		json_object_put(__pwdgrpd_pwall);
-		__pwdgrpd_pwall = NULL;
-		__pwdgrpd_pwall_off = -1;
+	if (json_object_get_type(__pwdgrpd_ents.pwds) != json_type_array) {
+		json_object_put(__pwdgrpd_ents.pwds);
+		__pwdgrpd_ents.pwds = NULL;
+		__pwdgrpd_ents.pwd_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	__pwdgrpd_pwall_off = 0;
+	__pwdgrpd_ents.pwd_off = 0;
 	return NSS_STATUS_SUCCESS;
 }
 
 enum nss_status _nss_pwdgrpd_endpwent()
 {
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	if (__pwdgrpd_pwall) json_object_put(__pwdgrpd_pwall);
-	__pwdgrpd_pwall = NULL;
-	__pwdgrpd_pwall_off = -1;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (__pwdgrpd_ents.pwds) json_object_put(__pwdgrpd_ents.pwds);
+	__pwdgrpd_ents.pwds = NULL;
+	__pwdgrpd_ents.pwd_off = -1;
 	return NSS_STATUS_SUCCESS;
 }
 
@@ -326,24 +330,24 @@ enum nss_status _nss_pwdgrpd_getgrent_r(
 	int *errnop
 )
 {
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	if (__pwdgrpd_grall_off == -1) {
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (__pwdgrpd_ents.grp_off == -1) {
 		_nss_pwdgrpd_setgrent();
-		if (__pwdgrpd_grall_off == -1) {
+		if (__pwdgrpd_ents.grp_off == -1) {
 			*errnop = EIO;
 			return NSS_STATUS_UNAVAIL;
 		}
 	}
-	size_t ngrps = json_object_array_length(__pwdgrpd_grall);
-	if (__pwdgrpd_grall_off >= ngrps)
+	size_t ngrps = json_object_array_length(__pwdgrpd_ents.grps);
+	if (__pwdgrpd_ents.grp_off >= ngrps)
 		return NSS_STATUS_NOTFOUND;
-	struct json_object *j_grp = json_object_array_get_idx(__pwdgrpd_grall, __pwdgrpd_grall_off);
+	struct json_object *j_grp = json_object_array_get_idx(__pwdgrpd_ents.grps, __pwdgrpd_ents.grp_off);
 	if (!j_grp) {
 		*errnop = EINVAL;
 		return NSS_STATUS_UNAVAIL;
 	}
 	enum nss_status ret = __pwdgrpd_parse_gr_json(j_grp, result, buffer, buflen, errnop);
-	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_grall_off += 1;
+	if (ret == NSS_STATUS_SUCCESS) __pwdgrpd_ents.grp_off += 1;
 	return ret;
 }
 
@@ -353,7 +357,7 @@ enum nss_status _nss_pwdgrpd_setgrent()
 	char url[LIBNSS_PWDGRPD_MAX_URL_LEN];
 	int ret;
 
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
 
 	ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/getgrall?t=json", __pwdgrpd_config.endpoint);
 	if (ret < 0 || ret > LIBNSS_PWDGRPD_MAX_URL_LEN) return NSS_STATUS_UNAVAIL;
@@ -391,31 +395,31 @@ enum nss_status _nss_pwdgrpd_setgrent()
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	__pwdgrpd_grall = json_tokener_parse(http_res.payload);
+	__pwdgrpd_ents.grps = json_tokener_parse(http_res.payload);
 	free(http_res.payload);
 
-	if (!__pwdgrpd_grall) {
-		__pwdgrpd_grall_off = -1;
+	if (!__pwdgrpd_ents.grps) {
+		__pwdgrpd_ents.grp_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	if (json_object_get_type(__pwdgrpd_grall) != json_type_array) {
-		json_object_put(__pwdgrpd_grall);
-		__pwdgrpd_grall = NULL;
-		__pwdgrpd_grall_off = -1;
+	if (json_object_get_type(__pwdgrpd_ents.grps) != json_type_array) {
+		json_object_put(__pwdgrpd_ents.grps);
+		__pwdgrpd_ents.grps = NULL;
+		__pwdgrpd_ents.grp_off = -1;
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	__pwdgrpd_grall_off = 0;
+	__pwdgrpd_ents.grp_off = 0;
 	return NSS_STATUS_SUCCESS;
 }
 
 enum nss_status _nss_pwdgrpd_endgrent()
 {
-	if (!__pwdgrpd_initialized) return NSS_STATUS_UNAVAIL;
-	if (__pwdgrpd_grall) json_object_put(__pwdgrpd_grall);
-	__pwdgrpd_grall = NULL;
-	__pwdgrpd_grall_off = -1;
+	if (!__pwdgrpd_config.ok) return NSS_STATUS_UNAVAIL;
+	if (__pwdgrpd_ents.grps) json_object_put(__pwdgrpd_ents.grps);
+	__pwdgrpd_ents.grps = NULL;
+	__pwdgrpd_ents.grp_off = -1;
 	return NSS_STATUS_SUCCESS;
 }
 
@@ -694,5 +698,5 @@ static inline enum nss_status __pwdgrpd_parse_gr_json(
 __attribute__((constructor)) 
 void __pwdgrpd_init(void) {
 	ini_parse(LIBNSS_PWDGRPD_CONFIG_PATH, &__pwdgrpd_parse_config, (void *) &__pwdgrpd_config);
-	__pwdgrpd_initialized = __pwdgrpd_check_config();
+	__pwdgrpd_config.ok = __pwdgrpd_check_config();
 }
