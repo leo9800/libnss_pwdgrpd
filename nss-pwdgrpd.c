@@ -1,8 +1,6 @@
-#include <asm-generic/errno-base.h>
 #include <curl/urlapi.h>
 #include <json-c/json.h>
 #include <curl/curl.h>
-#include <json-c/json_object.h>
 #include <nss.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +28,7 @@
 struct pwdgrpd_config {
 	bool ok;
 	const char endpoint[LIBNSS_PWDGRPD_MAX_URL_LEN];
+	time_t timeout;
 };
 
 struct pwdgrpd_ents {
@@ -39,11 +38,10 @@ struct pwdgrpd_ents {
 	off_t grp_off;
 };
 
-static struct pwdgrpd_config __pwdgrpd_config = {.ok = false, .endpoint = "\x00"};
+static struct pwdgrpd_config __pwdgrpd_config = {.ok = false, .endpoint = "\x00", .timeout = 10};
 static struct pwdgrpd_ents __pwdgrpd_ents = {.pwds = NULL, .grps = NULL, .pwd_off = -1, .grp_off = -1};
 
 static int __pwdgrpd_parse_config(void *, const char *, const char *, const char *);
-static bool __pwdgrpd_check_config(void);
 static size_t __pwdgrpd_curl_write_cb(void *, size_t, size_t, void *);
 static inline enum nss_status __pwdgrpd_curl(const char *, struct json_object **, int *);
 static inline char *__pwdgrpd_safe_bufcpy(const char *, char **, const char *, const size_t);
@@ -379,7 +377,7 @@ static inline enum nss_status __pwdgrpd_curl(
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &__pwdgrpd_curl_write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &http_response);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, __pwdgrpd_config.timeout);
 
 	// if curl request failed (e.g. timeout) ...
 	if (curl_easy_perform(curl) != CURLE_OK) {*errnop = EIO; ret = NSS_STATUS_TRYAGAIN; goto end;}
@@ -409,20 +407,6 @@ end:
 	return ret;
 }
 
-static bool __pwdgrpd_check_config()
-{
-#if LIBNSS_PWDGRPD_HTTPS_ONLY == true
-	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8)) return false;
-#else
-	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8) && strncmp(__pwdgrpd_config.endpoint, "http://", 7)) return false;
-#endif
-	CURLU *curlu = curl_url();
-	if (!curlu) return false;
-	CURLUcode ret = curl_url_set(curlu, CURLUPART_URL, __pwdgrpd_config.endpoint, CURLU_DISALLOW_USER | CURLU_GUESS_SCHEME);
-	curl_url_cleanup(curlu);
-	return ret == CURLUE_OK;
-}
-
 static int __pwdgrpd_parse_config(
 	void *userp,
 	const char *section,
@@ -431,8 +415,14 @@ static int __pwdgrpd_parse_config(
 )
 {
 	struct pwdgrpd_config *config = (struct pwdgrpd_config *) userp;
+
 	if (strcmp(section, "pwdgrpd") == 0 && strcmp(name, "endpoint") == 0) {
 		strcpy((char *) config->endpoint, value);
+		return 1;
+	}
+
+	if (strcmp(section, "pwdgrpd") == 0 && strcmp(name, "timeout") == 0) {
+		config->timeout = (time_t) atol(value);
 		return 1;
 	}
 
@@ -565,6 +555,24 @@ static inline enum nss_status __pwdgrpd_parse_gr_json(
 
 __attribute__((constructor)) 
 void __pwdgrpd_init(void) {
+	CURLU *curlu;
+	CURLUcode curlu_code;
+
 	ini_parse(LIBNSS_PWDGRPD_CONFIG_PATH, &__pwdgrpd_parse_config, (void *) &__pwdgrpd_config);
-	__pwdgrpd_config.ok = __pwdgrpd_check_config();
+	if (__pwdgrpd_config.timeout < 0) goto fail;
+#if LIBNSS_PWDGRPD_HTTPS_ONLY == true
+	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8)) goto fail;
+#else
+	if (strncmp(__pwdgrpd_config.endpoint, "https://", 8) && \
+		strncmp(__pwdgrpd_config.endpoint, "http://", 7)) goto fail;
+#endif
+	curlu = curl_url();
+	if (!curlu) goto fail;
+	curlu_code = curl_url_set(curlu, CURLUPART_URL, __pwdgrpd_config.endpoint, CURLU_DISALLOW_USER | CURLU_GUESS_SCHEME);
+	curl_url_cleanup(curlu);
+	if (curlu_code != CURLUE_OK) goto fail;
+	__pwdgrpd_config.ok = true;
+	return;
+fail:
+	__pwdgrpd_config.ok = false;
 }
