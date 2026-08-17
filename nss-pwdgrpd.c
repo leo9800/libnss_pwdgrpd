@@ -67,6 +67,7 @@ enum nss_status _nss_pwdgrpd_getpwnam_r(
 	enum nss_status ret;
 	struct json_object *json;
 
+	json = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwnam/%s?t=json", pwdgrpd_config.endpoint, name);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
@@ -91,6 +92,7 @@ enum nss_status _nss_pwdgrpd_getpwuid_r(
 	enum nss_status ret;
 	struct json_object *json;
 
+	json = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	snprintf_ret = snprintf(url, sizeof(url), "%s/getpwuid/%d?t=json", pwdgrpd_config.endpoint, uid);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
@@ -115,6 +117,7 @@ enum nss_status _nss_pwdgrpd_getgrnam_r(
 	enum nss_status ret;
 	struct json_object *json;
 
+	json = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrnam/%s?t=json", pwdgrpd_config.endpoint, name);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
@@ -139,6 +142,7 @@ enum nss_status _nss_pwdgrpd_getgrgid_r(
 	enum nss_status ret;
 	struct json_object *json;
 
+	json = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	snprintf_ret = snprintf(url, sizeof(url), "%s/getgrgid/%d?t=json", pwdgrpd_config.endpoint, gid);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;}
@@ -168,6 +172,7 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	size_t newsize;
 	gid_t *new_groupsp;
 
+	json = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	snprintf_ret = snprintf(url, LIBNSS_PWDGRPD_MAX_URL_LEN, "%s/initgroups/%s?t=json&b=gid", pwdgrpd_config.endpoint, user);
 	if (snprintf_ret < 0 || snprintf_ret > LIBNSS_PWDGRPD_MAX_URL_LEN) {*errnop = E2BIG; ret = NSS_STATUS_UNAVAIL; goto end;};
@@ -214,6 +219,7 @@ enum nss_status _nss_pwdgrpd_getpwent_r(
 	size_t npwds;
 	struct json_object *j_pwd;
 
+	j_pwd = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	// if not initialized ...
 	// this could happen because glibc allows user to call get[pw,gr]ent() without calling set[pw,gr]ent() in advance
@@ -290,6 +296,7 @@ enum nss_status _nss_pwdgrpd_getgrent_r(
 	size_t ngrps;
 	struct json_object *j_grp;
 
+	j_grp = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
 	// if not initialized ...
 	// this could happen because glibc allows user to call get[pw,gr]ent() without calling set[pw,gr]ent() in advance
