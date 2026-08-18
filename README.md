@@ -60,7 +60,7 @@ group:      files pwdgrpd
 
 ## Expected API Specification
 
-* A reference API server implementation could be found at: [https://github.com/leo9800/pwdgrpd](https://github.com/leo9800/pwdgrpd) *
+*A reference API server implementation could be found at: [https://github.com/leo9800/pwdgrpd](https://github.com/leo9800/pwdgrpd)*
 
 The backing daemon or API server must expose the following REST endpoints returning JSON:
 
