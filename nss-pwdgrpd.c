@@ -4,6 +4,7 @@
 #include <json-c/json_object.h>
 #include <json-c/json_types.h>
 #include <nss.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,7 @@ static size_t pwdgrpd_curl_write_cb(void *, size_t, size_t, void *);
 static inline enum nss_status pwdgrpd_curl(const char *, struct json_object **, int *);
 static inline enum nss_status pwdgrpd_parse_pw_json(const struct json_object *, struct passwd *, char *, size_t, int *);
 static inline enum nss_status pwdgrpd_parse_gr_json(const struct json_object *, struct group *, char *, size_t, int *);
+static inline enum nss_status pwdgrpd_append_gid(gid_t, gid_t, long *, long *, gid_t **, long, int *);
 static inline char *pwdgrpd_safe_bufcpy(const char *, char **, const char *, const size_t);
 
 struct binary_string {
@@ -172,8 +174,7 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	struct json_object *json;
 	enum nss_status ret;
 	size_t ngids;
-	size_t newsize;
-	gid_t *new_groupsp;
+	gid_t gid;
 
 	json = NULL;
 	if (!pwdgrpd_config.ok) {*errnop = EFAULT; ret = NSS_STATUS_UNAVAIL; goto end;}
@@ -184,25 +185,11 @@ enum nss_status _nss_pwdgrpd_initgroups_dyn(
 	// returns must be an array of additional gids
 	if (json_object_get_type(json) != json_type_array) {*errnop = EINVAL; ret = NSS_STATUS_UNAVAIL; goto end;}
 	ngids = json_object_array_length(json);
-	// check if we need expand the groupsp array
-	if (*size - *start <= ngids + 1) { // 1 gid specified in param + other retrieved by API
-		// double the size if it is not exceeding the limit
-		newsize = limit > (*size * 2) ? (*size * 2) : limit;
-		new_groupsp = realloc(*groupsp, newsize);
-		// error out if we could not expand it due to OOM
-		if (new_groupsp == NULL) {*errnop = ENOMEM; ret = NSS_STATUS_TRYAGAIN; goto end;}
-		// copy pointer if expand succeeded
-		*groupsp = new_groupsp;
-	}
-
-	// add primary group of user (i.e. gid specified in passwd file)
-	(*groupsp)[*start] = group;
-	*start += 1;
-
 	// copy every single additional gid to groupsp
 	for (int i = 0; i < ngids; i++) {
-		(*groupsp)[*start] = (gid_t) json_object_get_int(json_object_array_get_idx(json, i));
-		*start += 1;
+		gid = (gid_t) json_object_get_int(json_object_array_get_idx(json, i));
+		ret = pwdgrpd_append_gid(gid, group, start, size, groupsp, limit, errnop);
+		if (ret != NSS_STATUS_SUCCESS) goto end;
 	}
 
 	ret = NSS_STATUS_SUCCESS;
@@ -599,6 +586,56 @@ static inline enum nss_status pwdgrpd_parse_gr_json(
 		return NSS_STATUS_TRYAGAIN;
 	}
 
+	return NSS_STATUS_SUCCESS;
+}
+
+static inline enum nss_status pwdgrpd_append_gid(
+	gid_t gid,
+	gid_t primary_gid,
+	long *start,
+	long *size,
+	gid_t **groupsp,
+	long limit,
+	int *errnop
+)
+{
+	// check for invalid inputs
+	if (*start < 0 || *size < 0 || *start > *size || (*size > 0 && *groupsp == NULL)) {*errnop = EINVAL; return NSS_STATUS_UNAVAIL;}
+
+	*errnop = 0;
+
+	// do not append primary gid to supplementary gids
+	if (gid == primary_gid) return NSS_STATUS_SUCCESS;
+
+	// if we got a limit and reached it ...
+	if (limit > 0 && *start >= limit) return NSS_STATUS_SUCCESS;
+
+	// avoid dups
+	for (long i = 0; i < *start; i++)
+		if ((*groupsp)[i] == gid) return NSS_STATUS_SUCCESS;
+
+	uintmax_t max_capacity = SIZE_MAX / sizeof(**groupsp);
+	if (max_capacity > (uintmax_t) LONG_MAX) max_capacity = (uintmax_t) LONG_MAX;
+	if (limit > 0 && max_capacity > (uintmax_t) limit) max_capacity = (uintmax_t) limit;
+	if ((uintmax_t) *start >= max_capacity) {*errnop = ENOMEM; return NSS_STATUS_TRYAGAIN;}
+
+	// check if we need more room
+	if (*start == *size) {
+		uintmax_t capacity = (uintmax_t) *size;
+		uintmax_t new_capacity;
+
+		if (capacity == 0) new_capacity = 1;
+		else if (capacity > max_capacity >> 1) new_capacity = max_capacity;
+		else new_capacity = capacity << 1;
+
+		gid_t *tmp = realloc(*groupsp, (size_t) new_capacity * sizeof(**groupsp));
+		if (!tmp) {*errnop = ENOMEM; return NSS_STATUS_TRYAGAIN;}
+
+		*groupsp = tmp;
+		*size = (long) new_capacity;
+	}
+	(*groupsp)[*start] = gid;
+	(*start)++;
 	return NSS_STATUS_SUCCESS;
 }
 
